@@ -10,93 +10,53 @@ from torchvision.utils import make_grid
 
 from ldm.models.diffusion.ddim_confidence import DDIMConfidenceSampler
 from ldm.util import instantiate_from_config
+from torch.utils.tensorboard import SummaryWriter
+import random
 """
 Inference script for multi-modal-driven face editing at 256x256 resolution
 """
-
 
 def parse_args():
 
     parser = argparse.ArgumentParser(description="")
 
     # uni-modal editing results
-    parser.add_argument(
-        "--imagic_text_folder",
-        type=str,
-        default=
-        "outputs/text_edit/27044.jpg/He is a teen. The face is covered with short pointed beard.",
-        help="path to Imagic text-based editing results")
-    parser.add_argument(
-        "--imagic_mask_folder",
-        type=str,
-        default=
-        "outputs/mask_edit/27044.jpg/27044_0_remove_smile_and_rings.png",
-        help="path to Imagic mask-based editing results")
+    parser.add_argument("--imagic_text_folder", type=str, default="outputs/text_edit/27044.jpg/He is a teen. The face is covered with short pointed beard.", help="path to Imagic text-based editing results")
+    parser.add_argument("--imagic_mask_folder", type=str, default="outputs/mask_edit/27044.jpg/27044_0_remove_smile_and_rings.png", help="path to Imagic mask-based editing results")
 
     # paths
-    parser.add_argument(
-        "--config_path",
-        type=str,
-        default="configs/256_codiff_mask_text.yaml",
-        help="path to model config")
-    parser.add_argument(
-        "--ckpt_path",
-        type=str,
-        default="pretrained/256_codiff_mask_text.ckpt",
-        help="path to model checkpoint")
-    parser.add_argument(
-        "--save_folder",
-        type=str,
-        default="outputs/collaborative_edit",
-        help="folder to save editing outputs")
+    parser.add_argument("--config_path", type=str, default="configs/256_codiff_mask_text.yaml", help="path to model config")
+    parser.add_argument("--ckpt_path", type=str, default="pretrained/256_codiff_mask_text.ckpt", help="path to model checkpoint")
+    parser.add_argument("--save_folder", type=str, default="outputs/collaborative_edit", help="folder to save editing outputs")
 
     # batch size and ddim steps
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=1,
-        help="number of images to generate")
-    parser.add_argument(
-        "--ddim_steps",
-        type=int,
-        default=50,
-        help=
-        "number of ddim steps (between 20 to 1000, the larger the slower but better quality)"
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=2,
-    )
+    parser.add_argument("--batch_size", type=int, default=1, help="number of images to generate")
+    parser.add_argument("--ddim_steps", type=int, default=50, help="number of ddim steps (between 20 to 1000, the larger the slower but better quality)")
+    parser.add_argument("--seed", type=int, default=2)
 
     # whether save intermediate outputs
-    parser.add_argument(
-        "--save_z",
-        type=bool,
-        default=False,
-        help=
-        "whether visualize the VAE latent codes and save them in the output folder",
-    )
-    parser.add_argument(
-        "--return_influence_function",
-        type=bool,
-        default=False,
-        help=
-        "whether visualize the Influence Functions and save them in the output folder",
-    )
-    parser.add_argument(
-        "--display_x_inter",
-        type=bool,
-        default=False,
-        help=
-        "whether display the intermediate DDIM outputs (x_t and pred_x_0) and save them in the output folder",
-    )
+    parser.add_argument("--save_z", type=bool, default=False, help="whether visualize the VAE latent codes and save them in the output folder")
+    parser.add_argument("--return_influence_function", type=bool, default=False, help="whether visualize the Influence Functions and save them in the output folder")
+    parser.add_argument("--display_x_inter", type=bool, default=False, help="whether display the intermediate DDIM outputs (x_t and pred_x_0) and save them in the output folder")
+
+    parser.add_argument("--tensorboard_logdir", type=str, default="runs/generate_256_masks_29980", help="Directory to save TensorBoard logs")
 
     args = parser.parse_args()
     return args
 
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 
 def main():
+
+    # 设置随机种子，确保生成的一致性
+    set_seed(42)  # 你可以根据需要选择一个特定的种子值
 
     args = parse_args()
 
@@ -110,6 +70,9 @@ def main():
     model_config['params']['text_ldm_ckpt_path'] = os.path.join( args.imagic_text_folder, 'optDM.ckpt')
     model = instantiate_from_config(model_config)
     model.init_from_ckpt(args.ckpt_path)
+
+    print(model)
+    
     mask_optDM_ckpt = torch.load( os.path.join(args.imagic_mask_folder, 'optDM.ckpt'))
     text_optDM_ckpt = torch.load(os.path.join(args.imagic_text_folder, 'optDM.ckpt'))
 
@@ -171,21 +134,11 @@ def main():
 
                 torch.manual_seed(seed)
 
-                ddim_sampler = DDIMConfidenceSampler(
-                    model=model,
-                    return_confidence_map=args.return_influence_function)
+                ddim_sampler = DDIMConfidenceSampler(model=model,return_confidence_map=args.return_influence_function)
 
                 torch.manual_seed(seed)
 
-                z_0_batch, intermediates = ddim_sampler.sample(
-                    S=args.ddim_steps,
-                    batch_size=args.batch_size,
-                    shape=(3, 64, 64),
-                    conditioning=condition,
-                    verbose=False,
-                    start_code=start_code,
-                    eta=1.0,
-                    log_every_t=1)
+                z_0_batch, intermediates = ddim_sampler.sample(S=args.ddim_steps, batch_size=args.batch_size, shape=(3, 64, 64), conditioning=condition, verbose=False, start_code=start_code, eta=1.0, log_every_t=1)
 
             # decode VAE latent z_0 to image x_0
             x_0_batch = model.decode_first_stage(z_0_batch)  # [B, 3, 256, 256]
@@ -194,10 +147,7 @@ def main():
         for idx in range(args.batch_size):
 
             # save synthesized image x_0
-            save_x_0_path = os.path.join(
-                save_sub_folder,
-                f'{str(idx).zfill(6)}_x_0_{alpha_idx}_alpha={round(alpha, 3)}.png'
-            )
+            save_x_0_path = os.path.join(save_sub_folder,f'{str(idx).zfill(6)}_x_0_{alpha_idx}_alpha={round(alpha, 3)}.png')
             x_0 = x_0_batch[idx, :, :, :].unsqueeze(0)  # [1, 3, 256, 256]
             x_0 = x_0.permute(0, 2, 3, 1).to('cpu').numpy()
             x_0 = (x_0 + 1.0) * 127.5
@@ -209,19 +159,14 @@ def main():
             # save intermediate x_t and pred_x_0
             if args.display_x_inter:
                 for cond_name in ['x_inter', 'pred_x0']:
-                    save_conf_path = os.path.join(
-                        save_sub_folder,
-                        f'{str(idx).zfill(6)}_{cond_name}.png')
+                    save_conf_path = os.path.join(save_sub_folder,f'{str(idx).zfill(6)}_{cond_name}.png')
                     conf = intermediates[f'{cond_name}']
                     conf = torch.stack(conf, dim=0)  # 50x8x3x64x64
                     conf = conf[:, idx, :, :, :]  #  50x3x64x64
                     print('decoding x_inter ......')
                     conf = model.decode_first_stage(conf)  # [50, 3, 256, 256]
-                    conf = make_grid(
-                        conf,
-                        nrow=10)  # 10 images per row # [3, 256x3, 256x10]
-                    conf = conf.permute(1, 2,
-                                        0).to('cpu').numpy()  # cxhxh -> hxhxc
+                    conf = make_grid(conf,nrow=10)  # 10 images per row # [3, 256x3, 256x10]
+                    conf = conf.permute(1, 2,0).to('cpu').numpy()  # cxhxh -> hxhxc
                     conf = (conf + 1.0) * 127.5
                     np.clip(conf, 0, 255, out=conf)  # clip to range 0 to 255
                     conf = conf.astype(np.uint8)
@@ -231,20 +176,13 @@ def main():
             # save influence functions
             if args.return_influence_function:
                 for cond_name in ['seg_mask', 'text']:
-                    save_conf_path = os.path.join(
-                        save_sub_folder,
-                        f'{str(idx).zfill(6)}_{cond_name}_influence_function.png'
-                    )
+                    save_conf_path = os.path.join(save_sub_folder,f'{str(idx).zfill(6)}_{cond_name}_influence_function.png')
                     conf = intermediates[f'{cond_name}_confidence_map']
                     conf = torch.stack(conf, dim=0)  # 50x8x1x64x64
                     conf = conf[:, idx, :, :, :]  #  50x1x64x64
-                    conf = torch.cat(
-                        [conf, conf, conf],
-                        dim=1)  # manually create 3 channels  # [50, 3, 64, 64]
-                    conf = make_grid(
-                        conf, nrow=10)  # 10 images per row # [3, 332, 662]
-                    conf = conf.permute(1, 2,
-                                        0).to('cpu').numpy()  # cxhxh -> hxhxc
+                    conf = torch.cat([conf, conf, conf],dim=1)  # manually create 3 channels  # [50, 3, 64, 64]
+                    conf = make_grid(conf, nrow=10)  # 10 images per row # [3, 332, 662]
+                    conf = conf.permute(1, 2, 0).to('cpu').numpy()  # cxhxh -> hxhxc
                     conf = conf * 255  # manually tuned denormalization: [0,1] -> [0,255]
                     np.clip(conf, 0, 255, out=conf)  # clip to range 0 to 255
                     conf = conf.astype(np.uint8)
@@ -253,8 +191,7 @@ def main():
 
             # save latent z_0
             if args.save_z:
-                save_z_0_path = os.path.join(save_sub_folder,
-                                             f'{str(idx).zfill(6)}_z_0.png')
+                save_z_0_path = os.path.join(save_sub_folder,f'{str(idx).zfill(6)}_z_0.png')
                 z_0 = z_0_batch[idx, :, :, :].unsqueeze(0)  # [1, 3, 64, 64]
                 z_0 = z_0.permute(0, 2, 3, 1).to('cpu').numpy()
                 z_0 = (z_0 + 40) * 4  # manually tuned denormalization
@@ -262,7 +199,6 @@ def main():
                 z_0 = z_0.astype(np.uint8)
                 z_0 = Image.fromarray(z_0[0])
                 z_0.save(save_z_0_path)
-
 
 if __name__ == "__main__":
     main()

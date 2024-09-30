@@ -17,9 +17,8 @@ from ldm.models.diffusion.ddim import DDIMSampler
 from ldm.util import instantiate_from_config
 
 from torch.utils.tensorboard import SummaryWriter
+import random
 
-#实例化SummaryWriter对象
-tb_writer = SummaryWriter(log_dir="runs/imagic")
 
 """
 Reference code:
@@ -32,16 +31,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--config', type=str, default='configs/256_mask.yaml')
 parser.add_argument('--ckpt', type=str, default='pretrained/256_mask.ckpt')
 parser.add_argument('--save_folder', type=str, default='outputs/mask_edit')
-parser.add_argument(
-    '--input_image_path',
-    type=str,
-    default='test_data/test_mask_edit/256_input_image/27044.jpg')
-parser.add_argument(
-    '--mask_path',
-    type=str,
-    default=
-    'test_data/test_mask_edit/256_edited_masks/27044_0_remove_smile_and_rings.png'
-)
+parser.add_argument('--input_image_path', type=str, default='test_data/test_mask_edit/256_input_image/27044.jpg')
+parser.add_argument('--mask_path', type=str, default='test_data/test_mask_edit/256_edited_masks/27044_0_remove_smile_and_rings.png')
 
 # hyperparameters
 parser.add_argument('--seed', type=int, default=0)
@@ -49,14 +40,21 @@ parser.add_argument('--stage1_lr', type=float, default=0.001)
 parser.add_argument('--stage1_num_iter', type=int, default=500)
 parser.add_argument('--stage2_lr', type=float, default=1e-6)
 parser.add_argument('--stage2_num_iter', type=int, default=1000)
-parser.add_argument(
-    '--alpha_list',
-    type=str,
-    default='-1, -0.5, 0, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5')
+parser.add_argument('--alpha_list',type=str,default='-1, -0.5, 0, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5')
 parser.add_argument('--set_random_seed', type=bool, default=False)
 parser.add_argument('--save_checkpoint', type=bool, default=True)
 
+parser.add_argument("--tensorboard_logdir", type=str, default="runs/generate_256_masks_29980", help="Directory to save TensorBoard logs")
+
 args = parser.parse_args()
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def load_model_from_config(config, ckpt, device="cpu", verbose=False):
@@ -79,45 +77,18 @@ def load_model_from_config(config, ckpt, device="cpu", verbose=False):
 
 
 @torch.no_grad()
-def sample_model(model,
-                 sampler,
-                 c,
-                 h,
-                 w,
-                 ddim_steps,
-                 scale,
-                 ddim_eta,
-                 start_code=None,
-                 n_samples=1):
+def sample_model(model, sampler, c, h, w, ddim_steps, scale, ddim_eta, start_code=None, n_samples=1): 
     """Sample the model"""
     uc = None
     if scale != 1.0:
         uc = model.get_learned_conditioning(n_samples * [""])
 
-    # print(f'model.model.parameters(): {model.model.parameters()}')
-    # for name, param in model.model.named_parameters():
-    #     if param.requires_grad:
-    #         print (name, param.data)
-    #         break
-
-    # print(f'unconditional_guidance_scale: {scale}') # 1.0
-    # print(f'unconditional_conditioning: {uc}') # None
     with model.ema_scope("Plotting"):
 
         shape = [3, 64, 64]  # [4, h // 8, w // 8]
-        samples_ddim, _ = sampler.sample(
-            S=ddim_steps,
-            conditioning=c,
-            batch_size=n_samples,
-            shape=shape,
-            verbose=False,
-            start_code=start_code,
-            unconditional_guidance_scale=scale,
-            unconditional_conditioning=uc,
-            eta=ddim_eta,
-        )
-        return samples_ddim
+        samples_ddim, _ = sampler.sample(S=ddim_steps, conditioning=c, batch_size=n_samples, shape=shape, verbose=False, start_code=start_code, unconditional_guidance_scale=scale, unconditional_conditioning=uc, eta=ddim_eta)
 
+        return samples_ddim
 
 def load_img(path, target_size=256):
     """Load an image, resize and output -1..1"""
@@ -146,11 +117,15 @@ def decode_to_im(samples, n_samples=1, nrow=1):
 
 if __name__ == '__main__':
 
+     # ========== TensorBoard Setup ==========
+    # tb_writer = SummaryWriter(log_dir=args.tensorboard_logdir)
+
     args.alpha_list = [float(i) for i in args.alpha_list.split(',')]
 
     device = "cuda"  # "cuda:0"
 
-   
+    # 设置随机种子，确保生成的一致性
+    set_seed(42)  # 你可以根据需要选择一个特定的种子值
 
     # Generation parameters
     scale = 1.0
@@ -161,10 +136,6 @@ if __name__ == '__main__':
 
     # initialize model
     global_model = load_model_from_config(args.config, args.ckpt, device)
-    
-    # # 添加模型结构到 TensorBoard
-    # init_img = torch.zeros((1, 3, 256, 256), device=device)
-    # tb_writer.add_graph(global_model, init_img)
 
     input_image = args.input_image_path
     image_name = input_image.split('/')[-1]
@@ -174,6 +145,8 @@ if __name__ == '__main__':
 
     model = copy.deepcopy(global_model)
     sampler = DDIMSampler(model)
+
+    print(model)
 
     # prepare directories
     save_dir = os.path.join(args.save_folder, image_name, str(mask_name))
@@ -285,7 +258,7 @@ if __name__ == '__main__':
         img.save(os.path.join(save_dir,f'0A_interText_origDM_{idx}_alpha={round(alpha,3)}.png'))
 
         # Log interpolated images to TensorBoard
-        tb_writer.add_image(f'Interpolated Image - Alpha={round(alpha, 3)}', transforms.ToTensor()(img))
+        # tb_writer.add_image(f'Interpolated Image - Alpha={round(alpha, 3)}', transforms.ToTensor()(img))
 
 
     # ======================= (B) Model Fine-Tuning ===================================
@@ -346,4 +319,4 @@ if __name__ == '__main__':
     print('Done')
 
     # 在代码结束后关闭 SummaryWriter
-    tb_writer.close()
+    # tb_writer.close()

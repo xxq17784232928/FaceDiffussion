@@ -91,7 +91,6 @@ class CelebAConditionalDataset(Dataset):
         mask_folder = '/hxp/dataset/data/newmask/CelebAMask-HQ-mask-color-palette_32_nearest_downsampled_from_hq_512_one_hot_2d_tensor/CelebAMask-HQ-mask-color-palette_32_nearest_downsampled_from_hq_512_one_hot_2d_tensor',#掩码路径
         sketch_folder = '/hxp/dataset/data/sketch/sketch_1x1024_tensor', #草图
 
-        
         ):
 
         self.transform = instantiate_from_config_vq_diffusion(im_preprocessor_config)
